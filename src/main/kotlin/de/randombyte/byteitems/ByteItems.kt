@@ -5,7 +5,6 @@ import de.randombyte.byteitems.commands.DeleteCommand
 import de.randombyte.byteitems.commands.GiveCommand
 import de.randombyte.byteitems.commands.ListCommand
 import de.randombyte.byteitems.commands.SaveCommand
-import de.randombyte.kosp.config.ConfigManager
 import de.randombyte.kosp.extensions.toText
 import ninja.leaping.configurate.commented.CommentedConfigurationNode
 import ninja.leaping.configurate.loader.ConfigurationLoader
@@ -22,11 +21,12 @@ import org.spongepowered.api.plugin.Plugin
 
 @Plugin(id = ByteItems.ID, name = ByteItems.NAME, version = ByteItems.VERSION, authors = [(ByteItems.AUTHOR)])
 class ByteItems @Inject constructor(
-        @DefaultConfig(sharedRoot = true) configurationLoader: ConfigurationLoader<CommentedConfigurationNode>,
+        @DefaultConfig(sharedRoot = false) private val configLoader: ConfigurationLoader<CommentedConfigurationNode>,
         val logger: Logger,
         val bStats: Metrics
 ) {
     internal companion object {
+
         const val ID = "byte-items"
         const val NAME = "ByteItems"
         const val VERSION = "2.2.6"
@@ -37,30 +37,21 @@ class ByteItems @Inject constructor(
         const val ID_ARG = "id"
         const val PLAYER_ARG = "player"
         const val AMOUNT_ARG = "amount"
-    }
 
-    private val configManager = ConfigManager(
-            configLoader = configurationLoader,
-            clazz = Config::class.java,
-            hyphenSeparatedKeys = true
-    )
+        const val DEFAULT_URL = "${ByteItems.ID}-database-utl"
+    }
 
     private lateinit var config: Config
 
     @Listener
     fun onPreInit(event: GameInitializationEvent) {
-        loadConfig()
+        syncConfig()
         registerCommands()
         registerService()
-        logger.info("$NAME loaded: $VERSION")
     }
 
     @Listener
-    fun onReload(event: GameReloadEvent) {
-        loadConfig()
-        registerCommands()
-        logger.info("Reloaded!")
-    }
+    fun onReload(event: GameReloadEvent) = syncConfig()
 
     private fun registerService() {
         val apiImpl = ByteItemsApiImpl(getConfig = { config })
@@ -68,53 +59,35 @@ class ByteItems @Inject constructor(
     }
 
     private fun registerCommands() {
-        Sponge.getCommandManager().run { getOwnedBy(this@ByteItems).forEach { removeMapping(it) } }
-
-        val itemChoices = config.items.map { it.key to it.toPair() }.toMap()
-
         Sponge.getCommandManager().register(this, CommandSpec.builder()
                 .child(CommandSpec.builder()
                         .permission("$ROOT_PERMISSION.save")
                         .arguments(string(ID_ARG.toText()))
-                        .executor(SaveCommand(
-                                saveItemStack = { id, itemStackSnapshot ->
-                                    if (config.items.containsKey(id)) return@SaveCommand false
-                                    config = with(config) { copy(items = items + (id to itemStackSnapshot)) }
-                                    saveConfig()
-                                    registerCommands()
-                                    return@SaveCommand true
-                        }))
+                        .executor(SaveCommand(config))
                         .build(), "save")
                 .child(CommandSpec.builder()
                         .permission("$ROOT_PERMISSION.give")
-                        .arguments(playerOrSource(PLAYER_ARG.toText()), choices(ID_ARG.toText(), itemChoices), optional(integer(AMOUNT_ARG.toText())))
-                        .executor(GiveCommand())
+                        .arguments(playerOrSource(PLAYER_ARG.toText()), string(ID_ARG.toText()), optional(integer(AMOUNT_ARG.toText())))
+                        .executor(GiveCommand(config))
                         .build(), "give")
                 .child(CommandSpec.builder()
                         .permission("$ROOT_PERMISSION.list")
-                        .executor(ListCommand(items = config.items))
+                        .executor(ListCommand(config))
                         .build(), "list")
                 .child(CommandSpec.builder()
                         .permission("$ROOT_PERMISSION.delete")
                         .arguments(string(ID_ARG.toText()))
-                        .executor(DeleteCommand(
-                                deleteItemStack = { id ->
-                                    if (!config.items.containsKey(id)) return@DeleteCommand false
-                                    config = with(config) { copy(items = items - id) }
-                                    saveConfig()
-                                    registerCommands()
-                                    true
-                                }))
+                        .executor(DeleteCommand(config))
                         .build(), "delete")
                 .build(), "byteitems", "bi")
     }
 
-    private fun loadConfig() {
-        config = configManager.get()
-        saveConfig() // regenerate config
-    }
-
-    private fun saveConfig() {
-        configManager.save(config)
+    private fun syncConfig() {
+        configLoader.load().let {
+            it.getNode(DEFAULT_URL).getString("jdbc:h2:${ByteItems.ID}").let { config = Config(it) }
+            config.let { (url, _) -> it.getNode(DEFAULT_URL).value = url }
+            configLoader.save(it)
+        }
+        logger.info("$NAME loaded: $VERSION")
     }
 }
