@@ -38,7 +38,7 @@ class ByteItems @Inject constructor(
         const val PLAYER_ARG = "player"
         const val AMOUNT_ARG = "amount"
 
-        const val DEFAULT_URL = "${ByteItems.ID}-database-utl"
+        const val DEFAULT_URL = "${ByteItems.ID}-database-url"
     }
 
     private lateinit var config: Config
